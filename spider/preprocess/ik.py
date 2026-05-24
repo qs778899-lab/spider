@@ -171,7 +171,7 @@ def main(
     enable_collision: bool = False,
     start_idx: int = 0,
     end_idx: int = -1,
-    sim_dt: float = 0.01,
+    sim_dt: float = 0.005,
     ref_dt: float = 0.02,
     data_id: int = 0,
     open_hand: bool = False,
