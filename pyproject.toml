@@ -25,7 +25,9 @@ dependencies = [
   "rerun-sdk==0.26.2",
   "viser",
   "ipdb",
-  "pymeshlab",
+  # pymeshlab 2025+ wheels require glibc 2.35; pin to last 2024-compatible
+  # release to support older Linux hosts.
+  "pymeshlab<2025",
   "open3d",
   "ipykernel",
   "huggingface_hub",
@@ -45,8 +47,16 @@ name = "nvidia"
 url = "https://pypi.nvidia.com/"
 explicit = true
 
+[tool.uv]
+# Allow uv to fall through to a later index when the first index lacks a
+# usable version (e.g. internal mirrors that only stock a legacy
+# opencv-python==3.2.0.6 with no Python 3.12 wheels).
+index-strategy = "unsafe-best-match"
+
 [tool.uv.sources]
 warp-lang = { index = "nvidia" }
+oakink2-toolkit = { path = "/home/chaoyip/OakInk2" }
+
 
 [tool.hatch.build.targets.wheel]
 packages = ["spider"]
@@ -55,6 +65,24 @@ packages = ["spider"]
 dev = [
   "ruff>=0.13.2",
 ]
+oakinkv2 = [
+  # Path source resolved in [tool.uv.sources] above. Override the path
+  # in your environment via `tool.uv.sources` or install manually:
+  #   uv pip install /path/to/OakInk2
+  "oakink2-toolkit",
+]
+# Optional 21-joint MANO skeleton in the viser viewer requires manotorch +
+# the gated MANO model files (mano.is.tue.mpg.de). manotorch's setup.py pins
+# an unbuildable opencv-python so it cannot live in the uv resolver; install
+# manually after `uv sync --extra oakinkv2`:
+#
+#   uv pip install pip
+#   uv pip install --no-build-isolation \
+#       'chumpy @ git+https://github.com/mattloper/chumpy@9b045ff5d6588a24a0bab52c83f032e2ba433e17'
+#   uv pip install --no-deps git+https://github.com/lixiny/manotorch.git
+#
+# Then place MANO_LEFT.pkl + MANO_RIGHT.pkl under <root>/models/ and pass
+# --mano-assets-root=<root> to the processor.
 
 [tool.ruff]
 # Same as Black.

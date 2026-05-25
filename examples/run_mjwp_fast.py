@@ -660,6 +660,20 @@ def main(config: Config):
                         boundary_jump,
                     )
 
+    if "viser" in config.viewer and config.save_viser:
+        viser_path = f"{config.output_dir}/visualization_mjwp_fast.viser"
+        try:
+            from spider.viewers import viser_viewer as _viser_viewer
+
+            server = _viser_viewer._STATE.server
+            if server is not None:
+                Path(viser_path).write_bytes(
+                    server.get_scene_serializer().serialize()
+                )
+                loguru.logger.info(f"Saved viser scene to {viser_path}")
+        except Exception as e:
+            loguru.logger.warning(f"Failed to save viser scene: {e}")
+
     if "viser" in config.viewer and config.wait_on_finish:
         loguru.logger.info(
             "Optimization complete! Keeping Viser server alive. Press Ctrl+C to exit."

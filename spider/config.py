@@ -148,6 +148,7 @@ class Config:
     save_video: bool = True
     save_info: bool = True
     save_rerun: bool = False
+    save_viser: bool = False
     save_metrics: bool = True
     save_config: bool = True
 

@@ -77,6 +77,7 @@ viewer: mujoco-rerun # "mujoco" | "rerun" | "viser" | "isaac"
 rerun_spawn: true
 save_video: true
 save_rerun: false
+save_viser: false
 save_metrics: true
 save_info: true
 save_config: true

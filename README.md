@@ -112,12 +112,12 @@ export DATA_ID=0
 export ROBOT_TYPE=xhand
 export DATASET_NAME=gigahand
 
-# for oakink dataset
-export TASK=lift_board
-export HAND_TYPE=bimanual
+# for oakinkv2 dataset (recommended: pre-processed to start from picking stage)
+export TASK=pick_spoon_bowl
+export HAND_TYPE=right
 export DATA_ID=0
 export ROBOT_TYPE=xhand
-export DATASET_NAME=oakink
+export DATASET_NAME=oakinkv2
 
 # run retargeting
 uv run examples/run_mjwp.py +override=${DATASET_NAME}
@@ -125,6 +125,14 @@ uv run examples/run_mjwp.py +override=${DATASET_NAME}
 # to use original (slower) config from the paper, add _origin suffix
 uv run examples/run_mjwp.py +override=${DATASET_NAME}_origin
 ```
+
+> Note: ``oakinkv2`` is the recommended OakInk pipeline. It loads directly
+> from the official OakInk-v2 raw data, crops each clip to a short window
+> centered on the grasp moment (default: 1.5s pre-grasp + 2.5s post-grasp),
+> and uses the maniptrans-derived right-hand object as the manipulation
+> target. The legacy ``oakink`` pipeline (which consumes the
+> already-baked maniptrans pickles starting after the grasp) is still
+> available via ``+override=oakink``, but for new work prefer ``oakinkv2``.
 
 For full workflow, please refer to the [Workflow](#workflow) section.
 

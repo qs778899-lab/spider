@@ -236,24 +236,48 @@ def main(
         reflectance=0.2,
     )
 
-    # add floor
-    if embodiment_type in ["right", "bimanual"]:
-        material_name = "right_groundplane"
-    else:
-        material_name = "left_groundplane"
-    mj_spec.worldbody.add_geom(
-        name="floor",
-        type=mujoco.mjtGeom.mjGEOM_PLANE,
-        size=[0, 0, 0.05],
-        pos=[0, 0, 0.0],
-        material=material_name,
-    )
-
-    # Load object convex meshes from task_info.json
+    # Load task_info early so we can position the floor under the object.
     task_info_path = f"{keypoint_data_dir}/../task_info.json"
     task_info = {}
     with open(task_info_path) as f:
         task_info = json.load(f)
+
+    # add floor: by default at z=0, but if the dataset reports the object's
+    # first-frame lowest world z (oakinkv2), put the floor a couple cm under
+    # the object so the support plate added by ``decompose_fast`` (which
+    # extends from obj_min_z down by ``thickness``) clears the world floor.
+    if embodiment_type in ["right", "bimanual"]:
+        material_name = "right_groundplane"
+    else:
+        material_name = "left_groundplane"
+    # Place the world floor right under the support plate's TOP (the plate
+    # is body-fixed to the object and hangs ``floor_well_below_offset`` below
+    # the object's frame-0 bottom). The floor catches the plate at frame 0,
+    # so the object sits at its original mocap height with the plate dangling
+    # below; the trajectory plays in original world coordinates.
+    plate_top_z = (
+        task_info.get("right_plate_top_world_z")
+        or task_info.get("left_plate_top_world_z")
+    )
+    if plate_top_z is not None:
+        # Plate occupies [plate_top_z - 0.01, plate_top_z] (body-fixed in
+        # local frame). Floor 1mm below plate's bottom so they just touch at
+        # frame 0 without overlap.
+        floor_z = float(plate_top_z) - 0.01 - 0.001
+    else:
+        # legacy fallback (no support plate available)
+        obj_min_z = task_info.get("obj_first_frame_lowest_world_z")
+        if obj_min_z is not None:
+            floor_z = float(obj_min_z) - 0.01 - 0.001
+        else:
+            floor_z = 0.0
+    mj_spec.worldbody.add_geom(
+        name="floor",
+        type=mujoco.mjtGeom.mjGEOM_PLANE,
+        size=[0, 0, 0.05],
+        pos=[0, 0, floor_z],
+        material=material_name,
+    )
     right_convex_dir = task_info.get("right_object_convex_dir")
     right_convex_dir = f"{dataset_dir}/{right_convex_dir}"
     left_convex_dir = task_info.get("left_object_convex_dir")

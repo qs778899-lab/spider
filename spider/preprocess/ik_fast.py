@@ -18,6 +18,7 @@ Date: 2026-03-07
 """
 
 import os
+from pathlib import Path
 
 import loguru
 import mink
@@ -30,6 +31,68 @@ from spider import ROOT
 from spider.io import get_processed_data_dir
 from spider.mujoco_utils import get_viewer
 
+# MANO 21-joint skeleton bones (parent -> child) for reference visualization
+_MANO_SKELETON_BONES = [
+    (0, 1), (1, 2), (2, 3), (3, 4),
+    (0, 5), (5, 6), (6, 7), (7, 8),
+    (0, 9), (9, 10), (10, 11), (11, 12),
+    (0, 13), (13, 14), (14, 15), (15, 16),
+    (0, 17), (17, 18), (18, 19), (19, 20),
+]
+_MANO_FINGERTIP_INDICES = [4, 8, 12, 16, 20]
+
+
+def _build_ref_skeleton(server, mano_assets_root, qpos_ref, ref_idx, embodiment_type):
+    """Render the reference MANO skeleton in viser using fingertip + wrist targets.
+
+    Returns a callable update_fn(t) -> None that updates joint/bone positions
+    for frame t. We don't actually need MANO FK here because qpos_ref already
+    has wrist + 5 fingertips per frame; we draw a simple wrist+fingertip
+    skeleton plus straight bones (wrist->each fingertip).
+    """
+    if "right" in embodiment_type or embodiment_type == "bimanual":
+        wrist_idx = ref_idx["right_palm"]
+        tip_idxs = [ref_idx[f"right_{n}"] for n in
+                    ["thumb_tip", "index_tip", "middle_tip", "ring_tip", "pinky_tip"]]
+    elif "left" in embodiment_type:
+        wrist_idx = ref_idx["left_palm"]
+        tip_idxs = [ref_idx[f"left_{n}"] for n in
+                    ["thumb_tip", "index_tip", "middle_tip", "ring_tip", "pinky_tip"]]
+    else:
+        return None
+
+    wrist_h = server.scene.add_icosphere(
+        "ref_hand/wrist", radius=0.012, color=(80, 130, 220),
+        position=tuple(qpos_ref[0, wrist_idx, :3]),
+    )
+    tip_handles = [
+        server.scene.add_icosphere(
+            f"ref_hand/tip_{i}", radius=0.008, color=(220, 80, 80),
+            position=tuple(qpos_ref[0, tidx, :3]),
+        )
+        for i, tidx in enumerate(tip_idxs)
+    ]
+    bone_handles = []
+    for tidx in tip_idxs:
+        h = server.scene.add_spline_catmull_rom(
+            f"ref_hand/bone_w_to_{tidx}",
+            positions=np.stack([
+                qpos_ref[0, wrist_idx, :3], qpos_ref[0, tidx, :3]
+            ]),
+            color=(255, 200, 50), line_width=2.5,
+        )
+        bone_handles.append((h, tidx))
+
+    def update(t):
+        wrist_pos = qpos_ref[t, wrist_idx, :3]
+        wrist_h.position = tuple(wrist_pos)
+        for k, tidx in enumerate(tip_idxs):
+            tip_handles[k].position = tuple(qpos_ref[t, tidx, :3])
+        for h, tidx in bone_handles:
+            h.positions = np.stack([wrist_pos, qpos_ref[t, tidx, :3]])
+
+    return update
+
 
 def main(
     dataset_dir: str = f"{ROOT}/../example_datasets",
@@ -39,6 +102,8 @@ def main(
     task: str = "pick_spoon_bowl",
     show_viewer: bool = False,
     save_video: bool = True,
+    save_viser: bool = False,
+    mano_assets_root: str | None = None,
     data_id: int = 0,
     start_idx: int = 0,
     end_idx: int = -1,
@@ -119,6 +184,47 @@ def main(
 
     # Load model
     model = mujoco.MjModel.from_xml_path(model_path)
+
+    # -- Viser setup (optional) --
+    viser_state = {"enabled": False}
+    if show_viewer or save_viser:
+        try:
+            from spider.viewers.viser_viewer import (
+                _STATE as _VISER_STATE,
+                build_and_log_scene,
+                init_viser,
+                log_frame,
+            )
+
+            init_viser(app_name=f"spider-ik-{task}")
+            spec, viser_model, viewer_body_entity_and_ids = build_and_log_scene(
+                Path(model_path)
+            )
+            del spec, viser_model
+            viser_state.update(
+                {
+                    "enabled": True,
+                    "log_frame": log_frame,
+                    "body_ids": viewer_body_entity_and_ids,
+                    "state": _VISER_STATE,
+                }
+            )
+            loguru.logger.info(
+                "Viser scene initialized (will record IK rollout for inspection)."
+            )
+        except Exception as e:
+            loguru.logger.warning(f"Failed to init viser: {e}")
+
+    # Optional reference MANO skeleton (only if MANO is loaded correctly)
+    ref_skeleton = None
+    if viser_state["enabled"] and mano_assets_root is not None:
+        ref_skeleton = _build_ref_skeleton(
+            viser_state["state"].server,
+            mano_assets_root,
+            qpos_ref,
+            ref_idx,
+            embodiment_type,
+        )
 
     # Object DOF count
     if embodiment_type == "bimanual":
@@ -257,6 +363,16 @@ def main(
                 renderer.update_scene(data=data, camera="front")
                 images.append(renderer.render())
 
+            if viser_state["enabled"]:
+                mujoco.mj_forward(model, data)
+                viser_state["log_frame"](
+                    data, sim_time=t * ref_dt,
+                    viewer_body_entity_and_ids=viser_state["body_ids"],
+                    show_ui=True, playback_fps=1.0 / ref_dt,
+                )
+                if ref_skeleton is not None:
+                    ref_skeleton(t)
+
             if show_viewer:
                 mujoco.mj_forward(model, data)
                 gui.sync()
@@ -328,6 +444,29 @@ def main(
     out_npz = f"{file_dir}/trajectory_ikrollout.npz"
     np.savez(out_npz, qpos=qpos_rollout)
     loguru.logger.info(f"Saved {out_npz}")
+
+    # -- Save viser export for offline inspection --
+    if save_viser and viser_state["enabled"]:
+        viser_path = f"{file_dir}/visualization_ik.viser"
+        try:
+            server = viser_state["state"].server
+            data_bytes = server.get_scene_serializer().serialize()
+            Path(viser_path).write_bytes(data_bytes)
+            loguru.logger.info(f"Saved viser scene to {viser_path}")
+        except Exception as e:
+            loguru.logger.warning(f"Failed to save viser scene: {e}")
+
+    if show_viewer and viser_state["enabled"]:
+        loguru.logger.info(
+            "Viser viewer running. Use timeline slider in browser. Ctrl-C to exit."
+        )
+        import time
+
+        try:
+            while True:
+                time.sleep(1.0)
+        except KeyboardInterrupt:
+            pass
 
 
 if __name__ == "__main__":
